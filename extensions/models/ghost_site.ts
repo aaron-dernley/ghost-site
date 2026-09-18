@@ -218,8 +218,13 @@ export const model = {
       },
     },
     updateSettings: {
-      description:
-        "Update site branding settings via PUT /settings/ (title, description/tagline, accent_color). Only the fields provided are changed.",
+      description: "Update site branding settings via PUT /settings/ (title, " +
+        "description/tagline, accent_color). Only the fields provided are " +
+        "changed. NOTE: as of Ghost 6.64, this endpoint returns 403 for " +
+        "Integration API keys ('API tokens do not have permission to " +
+        "access this endpoint') — same restriction as exportContent's " +
+        "/db/. Set these manually via Ghost Admin → Settings → General " +
+        "until a future Ghost version or role change lifts it.",
       arguments: z.object({
         title: z.string().optional().describe("Site title."),
         description: z.string().optional().describe(

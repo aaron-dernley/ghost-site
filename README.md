@@ -64,6 +64,15 @@ Check those before calling `activateTheme(name)` (`PUT /themes/{name}/activate/`
 `name` is the theme's declared name from the upload result, not the zip
 filename.
 
+### `site` resource — `updateSettings` method
+
+`PUT /settings/` — updates only the fields you pass (`title`, `description`,
+`accent_color`), then re-fetches `GET /site/` so the stored `site` resource
+stays consistent with `sync`. **As of Ghost 6.64 this also returns 403 for
+Integration API keys** (`API tokens do not have permission to access this
+endpoint`) — same restriction as `exportContent`'s `/db/`. Kept for when that
+lifts; until then set these manually via Ghost Admin → Settings → General.
+
 ### `export` file — `exportContent` method
 
 `GET /db/` — full JSON content export. **As of Ghost 6.64 this returns 403

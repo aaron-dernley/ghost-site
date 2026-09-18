@@ -1,0 +1,15 @@
+manifestVersion: 1
+name: "@aaronge/ghost-site"
+version: "2026.09.18.1"
+description: "Manage a Ghost site's Admin API surface — site health, theme upload/activation, content export."
+
+repository: https://github.com/aaron-dernley/ghost-site
+
+models:
+  - ghost_site.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE
+
+platforms: []

@@ -68,6 +68,20 @@ const ThemeSchema = z.object({
   errors: z.array(ThemeWarningSchema).optional(),
 });
 
+// Subset of Ghost's post object — confirmed live against a Ghost 6.64 site
+// via setPostStatus.
+const PostSchema = z.object({
+  id: z.string(),
+  uuid: z.string().optional(),
+  title: z.string(),
+  slug: z.string(),
+  status: z.string(),
+  url: z.string().optional(),
+  updated_at: z.string(),
+  created_at: z.string().optional(),
+  published_at: z.string().nullable().optional(),
+});
+
 /** Signs a Ghost Admin API token (HS256 JWT, 5 minute expiry) from an `<id>:<secret>` key. */
 export async function signAdminApiToken(adminApiKey: string): Promise<string> {
   const sepIndex = adminApiKey.indexOf(":");
@@ -164,6 +178,12 @@ export const model = {
       description:
         "Result of a theme upload or activation, including gscan warnings/errors.",
       schema: ThemeSchema,
+      lifetime: "infinite",
+      garbageCollection: 10,
+    },
+    post: {
+      description: "Result of a post status change (e.g. publish/unpublish).",
+      schema: PostSchema,
       lifetime: "infinite",
       garbageCollection: 10,
     },
@@ -291,6 +311,100 @@ export const model = {
           body.site,
         );
         context.logger.info("Site settings updated: {keys}", { keys });
+        return { dataHandles: [handle] };
+      },
+    },
+    setPostStatus: {
+      description:
+        "Change a post's status ('draft' to unpublish, 'published' to " +
+        "publish) via GET then PUT /posts/{id}/ — Ghost's PUT requires the " +
+        "post's current updated_at as an optimistic-lock check, so this " +
+        "reads it first.",
+      arguments: z.object({
+        id: z.string().describe(
+          "Post id (24-char hex, not the slug) — visible in the Admin " +
+            "editor's URL or via the posts table.",
+        ),
+        status: z.enum(["draft", "published"]).describe("New status."),
+      }),
+      execute: async (
+        args: { id: string; status: "draft" | "published" },
+        context: {
+          globalArgs: GlobalArgs;
+          writeResource: (
+            specName: string,
+            name: string,
+            data: Record<string, unknown>,
+          ) => Promise<{ name: string }>;
+          logger: {
+            info: (msg: string, props?: Record<string, unknown>) => void;
+          };
+        },
+      ) => {
+        context.logger.info("Setting post {id} status to {status}", {
+          id: args.id,
+          status: args.status,
+        });
+
+        const getRes = await ghostFetch(
+          context.globalArgs,
+          `/posts/${encodeURIComponent(args.id)}/`,
+        );
+        if (!getRes.ok) {
+          throw new Error(
+            `GET /posts/${args.id}/ failed (${getRes.status}): ${await readErrorMessage(
+              getRes,
+            )}`,
+          );
+        }
+        const getBody = await getRes.json() as {
+          posts: Array<Record<string, unknown>>;
+        };
+        if (!getBody.posts || getBody.posts.length === 0) {
+          throw new Error(
+            `GET /posts/${args.id}/ succeeded (2xx) but the response ` +
+              "contained no post data — unexpected Ghost Admin API response shape.",
+          );
+        }
+        const currentUpdatedAt = getBody.posts[0].updated_at;
+
+        const putRes = await ghostFetch(
+          context.globalArgs,
+          `/posts/${encodeURIComponent(args.id)}/`,
+          {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              posts: [{ status: args.status, updated_at: currentUpdatedAt }],
+            }),
+          },
+        );
+        if (!putRes.ok) {
+          throw new Error(
+            `PUT /posts/${args.id}/ failed (${putRes.status}): ${await readErrorMessage(
+              putRes,
+            )}`,
+          );
+        }
+        const putBody = await putRes.json() as {
+          posts: Array<Record<string, unknown>>;
+        };
+        if (!putBody.posts || putBody.posts.length === 0) {
+          throw new Error(
+            `PUT /posts/${args.id}/ succeeded (2xx) but the response ` +
+              "contained no post data — unexpected Ghost Admin API response shape.",
+          );
+        }
+        const post = putBody.posts[0];
+        const handle = await context.writeResource(
+          "post",
+          `post-${post.id}`,
+          post,
+        );
+        context.logger.info("Post {id} status set to {status}", {
+          id: args.id,
+          status: args.status,
+        });
         return { dataHandles: [handle] };
       },
     },

@@ -180,6 +180,80 @@ Deno.test("updateSettings throws when called with no fields", async () => {
   );
 });
 
+// --- setPostStatus ---------------------------------------------------------
+
+Deno.test("setPostStatus reads updated_at then PUTs the new status", async () => {
+  let putBody: unknown;
+  await withMockedFetch(
+    async (req) => {
+      if (req.method === "GET") {
+        assert(req.url.endsWith("/ghost/api/admin/posts/abc123/"));
+        return Response.json({
+          posts: [{
+            id: "abc123",
+            title: "Coming soon",
+            slug: "coming-soon",
+            status: "published",
+            updated_at: "2026-09-18T10:00:00.000Z",
+          }],
+        });
+      }
+      assertEquals(req.method, "PUT");
+      putBody = await req.json();
+      return Response.json({
+        posts: [{
+          id: "abc123",
+          title: "Coming soon",
+          slug: "coming-soon",
+          status: "draft",
+          updated_at: "2026-09-18T11:00:00.000Z",
+        }],
+      });
+    },
+    async () => {
+      const { context, getWrittenResources } = createModelTestContext({
+        globalArgs: GLOBAL_ARGS,
+        methodName: "setPostStatus",
+      });
+      await model.methods.setPostStatus.execute(
+        { id: "abc123", status: "draft" },
+        asContext(context),
+      );
+
+      assertEquals(putBody, {
+        posts: [{ status: "draft", updated_at: "2026-09-18T10:00:00.000Z" }],
+      });
+      const written = getWrittenResources();
+      assertEquals(written[0].specName, "post");
+      assertEquals(
+        (written[0].data as Record<string, unknown>).status,
+        "draft",
+      );
+    },
+  );
+});
+
+Deno.test("setPostStatus throws a clear error when the GET returns no post data", async () => {
+  await withMockedFetch(
+    () => Response.json({ posts: [] }),
+    async () => {
+      const { context } = createModelTestContext({
+        globalArgs: GLOBAL_ARGS,
+        methodName: "setPostStatus",
+      });
+      await assertRejects(
+        () =>
+          model.methods.setPostStatus.execute(
+            { id: "abc123", status: "draft" },
+            asContext(context),
+          ),
+        Error,
+        "no post data",
+      );
+    },
+  );
+});
+
 // --- uploadTheme ---------------------------------------------------------
 
 Deno.test("uploadTheme writes the theme resource on success", async () => {

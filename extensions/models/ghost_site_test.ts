@@ -125,6 +125,61 @@ Deno.test("sync throws a descriptive error on a non-2xx response", async () => {
   );
 });
 
+// --- updateSettings ---------------------------------------------------------
+
+Deno.test("updateSettings PUTs only the provided fields, then re-fetches /site/", async () => {
+  let settingsBody: unknown;
+  await withMockedFetch(
+    async (req) => {
+      if (req.url.endsWith("/ghost/api/admin/settings/")) {
+        assertEquals(req.method, "PUT");
+        settingsBody = await req.json();
+        return Response.json({ settings: [] });
+      }
+      if (req.url.endsWith("/ghost/api/admin/site/")) {
+        return Response.json({
+          site: { title: "New Title", description: "New tagline" },
+        });
+      }
+      throw new Error(`unexpected request: ${req.url}`);
+    },
+    async () => {
+      const { context, getWrittenResources } = createModelTestContext({
+        globalArgs: GLOBAL_ARGS,
+        methodName: "updateSettings",
+      });
+      await model.methods.updateSettings.execute(
+        { title: "New Title", description: "New tagline" },
+        asContext(context),
+      );
+
+      assertEquals(settingsBody, {
+        settings: [
+          { key: "title", value: "New Title" },
+          { key: "description", value: "New tagline" },
+        ],
+      });
+      const written = getWrittenResources();
+      assertEquals(
+        (written[0].data as Record<string, unknown>).title,
+        "New Title",
+      );
+    },
+  );
+});
+
+Deno.test("updateSettings throws when called with no fields", async () => {
+  const { context } = createModelTestContext({
+    globalArgs: GLOBAL_ARGS,
+    methodName: "updateSettings",
+  });
+  await assertRejects(
+    () => model.methods.updateSettings.execute({}, asContext(context)),
+    Error,
+    "no fields to update",
+  );
+});
+
 // --- uploadTheme ---------------------------------------------------------
 
 Deno.test("uploadTheme writes the theme resource on success", async () => {

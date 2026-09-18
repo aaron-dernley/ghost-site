@@ -217,6 +217,78 @@ export const model = {
         return { dataHandles: [handle] };
       },
     },
+    updateSettings: {
+      description:
+        "Update site branding settings via PUT /settings/ (title, description/tagline, accent_color). Only the fields provided are changed.",
+      arguments: z.object({
+        title: z.string().optional().describe("Site title."),
+        description: z.string().optional().describe(
+          "Site tagline/description.",
+        ),
+        accent_color: z.string().optional().describe(
+          "Accent color, e.g. #f0a63c.",
+        ),
+      }),
+      execute: async (
+        args: { title?: string; description?: string; accent_color?: string },
+        context: {
+          globalArgs: GlobalArgs;
+          writeResource: (
+            specName: string,
+            name: string,
+            data: Record<string, unknown>,
+          ) => Promise<{ name: string }>;
+          logger: {
+            info: (msg: string, props?: Record<string, unknown>) => void;
+          };
+        },
+      ) => {
+        const settings = Object.entries(args)
+          .filter(([, value]) => value !== undefined)
+          .map(([key, value]) => ({ key, value }));
+        if (settings.length === 0) {
+          throw new Error(
+            "updateSettings called with no fields to update — pass at " +
+              "least one of title, description, accent_color.",
+          );
+        }
+        const keys = settings.map((s) => s.key).join(", ");
+        context.logger.info("Updating site settings: {keys}", { keys });
+
+        const res = await ghostFetch(context.globalArgs, "/settings/", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ settings }),
+        });
+        if (!res.ok) {
+          throw new Error(
+            `PUT /settings/ failed (${res.status}): ${await readErrorMessage(
+              res,
+            )}`,
+          );
+        }
+
+        // /settings/ responds with a flat key/value list, a different shape
+        // than /site/ (which sync() and the "site" resource schema expect)
+        // — re-fetch /site/ so the stored resource stays consistent.
+        const siteRes = await ghostFetch(context.globalArgs, "/site/");
+        if (!siteRes.ok) {
+          throw new Error(
+            `Settings updated, but GET /site/ failed to refresh (${siteRes.status}): ${await readErrorMessage(
+              siteRes,
+            )}`,
+          );
+        }
+        const body = await siteRes.json() as { site: Record<string, unknown> };
+        const handle = await context.writeResource(
+          "site",
+          "current",
+          body.site,
+        );
+        context.logger.info("Site settings updated: {keys}", { keys });
+        return { dataHandles: [handle] };
+      },
+    },
     uploadTheme: {
       description:
         "Upload a theme zip via POST /themes/upload/. Does not activate it — run activateTheme afterward.",

@@ -27,28 +27,49 @@ const GlobalArgsSchema = z.object({
 });
 type GlobalArgs = z.infer<typeof GlobalArgsSchema>;
 
+// Explicit fields, no .passthrough() — passthrough blocks CEL expression
+// validation on unlisted attributes (see extension/references/model/api.md,
+// "Schema requirement"). Fields below are confirmed live against a running
+// Ghost 6.64 site (GET /site/); anything Ghost adds/removes still lands in
+// the stored data (Zod warns on mismatch, doesn't throw), it just won't be
+// CEL-addressable until declared here.
 const SiteSchema = z.object({
   title: z.string(),
-  description: z.string().optional(),
+  description: z.string().nullable().optional(),
+  logo: z.string().nullable().optional(),
+  icon: z.string().nullable().optional(),
+  cover_image: z.string().nullable().optional(),
+  accent_color: z.string().nullable().optional(),
+  locale: z.string().optional(),
+  timezone: z.string().optional(),
   url: z.string(),
   version: z.string(),
-}).passthrough();
+  allow_external_signup: z.boolean().optional(),
+  site_uuid: z.string().optional(),
+});
 
+// Theme fields are per Ghost's documented Admin API shape, NOT live-verified
+// (uploadTheme/activateTheme were never exercised against a real theme — no
+// zip existed to test with when this was written). Same passthrough note as
+// above applies if Ghost's actual shape differs.
 const ThemeWarningSchema = z.object({
   level: z.string().optional(),
   rule: z.string().optional(),
+  code: z.string().optional(),
   details: z.string().optional(),
-}).passthrough();
+});
 
 const ThemeSchema = z.object({
   name: z.string(),
+  package: z.record(z.string(), z.unknown()).nullable().optional(),
   active: z.boolean(),
+  templates: z.array(z.string()).optional(),
   warnings: z.array(ThemeWarningSchema).optional(),
   errors: z.array(ThemeWarningSchema).optional(),
-}).passthrough();
+});
 
 /** Signs a Ghost Admin API token (HS256 JWT, 5 minute expiry) from an `<id>:<secret>` key. */
-async function signAdminApiToken(adminApiKey: string): Promise<string> {
+export async function signAdminApiToken(adminApiKey: string): Promise<string> {
   const sepIndex = adminApiKey.indexOf(":");
   if (sepIndex < 1 || sepIndex === adminApiKey.length - 1) {
     throw new Error(
@@ -170,8 +191,14 @@ export const model = {
             name: string,
             data: Record<string, unknown>,
           ) => Promise<{ name: string }>;
+          logger: {
+            info: (msg: string, props?: Record<string, unknown>) => void;
+          };
         },
       ) => {
+        context.logger.info("Fetching site info from {apiUrl}", {
+          apiUrl: context.globalArgs.apiUrl,
+        });
         const res = await ghostFetch(context.globalArgs, "/site/");
         if (!res.ok) {
           throw new Error(
@@ -184,6 +211,9 @@ export const model = {
           "current",
           body.site,
         );
+        context.logger.info("Fetched site info for {title}", {
+          title: body.site.title,
+        });
         return { dataHandles: [handle] };
       },
     },
@@ -202,8 +232,14 @@ export const model = {
             name: string,
             data: Record<string, unknown>,
           ) => Promise<{ name: string }>;
+          logger: {
+            info: (msg: string, props?: Record<string, unknown>) => void;
+          };
         },
       ) => {
+        context.logger.info("Uploading theme from {zipPath}", {
+          zipPath: args.zipPath,
+        });
         const zipBytes = await Deno.readFile(args.zipPath);
         const form = new FormData();
         form.append(
@@ -225,12 +261,19 @@ export const model = {
         const body = await res.json() as {
           themes: Array<Record<string, unknown>>;
         };
+        if (!body.themes || body.themes.length === 0) {
+          throw new Error(
+            "POST /themes/upload/ succeeded (2xx) but the response contained " +
+              "no theme data — unexpected Ghost Admin API response shape.",
+          );
+        }
         const theme = body.themes[0];
         const handle = await context.writeResource(
           "theme",
           `upload-${theme.name}`,
           theme,
         );
+        context.logger.info("Uploaded theme {name}", { name: theme.name });
         return { dataHandles: [handle] };
       },
     },
@@ -251,8 +294,12 @@ export const model = {
             name: string,
             data: Record<string, unknown>,
           ) => Promise<{ name: string }>;
+          logger: {
+            info: (msg: string, props?: Record<string, unknown>) => void;
+          };
         },
       ) => {
+        context.logger.info("Activating theme {name}", { name: args.name });
         const res = await ghostFetch(
           context.globalArgs,
           `/themes/${encodeURIComponent(args.name)}/activate/`,
@@ -268,8 +315,16 @@ export const model = {
         const body = await res.json() as {
           themes: Array<Record<string, unknown>>;
         };
+        if (!body.themes || body.themes.length === 0) {
+          throw new Error(
+            `PUT /themes/${args.name}/activate/ succeeded (2xx) but the ` +
+              "response contained no theme data — unexpected Ghost Admin " +
+              "API response shape.",
+          );
+        }
         const theme = body.themes[0];
         const handle = await context.writeResource("theme", "active", theme);
+        context.logger.info("Activated theme {name}", { name: theme.name });
         return { dataHandles: [handle] };
       },
     },
@@ -293,8 +348,14 @@ export const model = {
           ) => {
             writeText: (text: string) => Promise<{ name: string }>;
           };
+          logger: {
+            info: (msg: string, props?: Record<string, unknown>) => void;
+          };
         },
       ) => {
+        context.logger.info("Exporting full content DB from {apiUrl}", {
+          apiUrl: context.globalArgs.apiUrl,
+        });
         const res = await ghostFetch(context.globalArgs, "/db/");
         if (!res.ok) {
           throw new Error(
@@ -307,6 +368,9 @@ export const model = {
           `export-${new Date().toISOString().slice(0, 10)}`,
         );
         const handle = await writer.writeText(text);
+        context.logger.info("Content export written", {
+          bytes: text.length,
+        });
         return { dataHandles: [handle] };
       },
     },
